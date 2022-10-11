@@ -1,20 +1,20 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"test_jajanomic/microservices/topup-storage/models"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/joho/godotenv"
-	"github.com/segmentio/kafka-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+var db *gorm.DB
 
 func main() {
 
@@ -28,71 +28,78 @@ func main() {
 		os.Getenv("DB_HOST"), os.Getenv("DB_USERNAME"), os.Getenv("DB_PASSWORD"), os.Getenv("DB_NAME"), os.Getenv("DB_PORT"),
 	)
 
-	db, err := gorm.Open(postgres.Open(dsn), nil)
+	conn, err := gorm.Open(postgres.Open(dsn), nil)
 	if err != nil {
 		log.Fatal("Error connect to db")
 	}
 
-	reader := getKafkaReader(os.Getenv("KAFKA_URL"), os.Getenv("KAFKA_TOPIC"), os.Getenv("KAFKA_GROUP_ID"))
-	ctx := context.Background()
-	for {
-		mssg, err := reader.FetchMessage(ctx)
-		if err != nil {
-			break
-		}
-		log.Printf("message at topic/partition/offset %v/%v/%v: %s\n", mssg.Topic, mssg.Partition, mssg.Offset, string(mssg.Key))
+	db = conn
 
-		if err := SaveBuyback(db, mssg.Value); err != nil {
-			log.Println(err.Error())
+	ConsumeMessage()
+}
+
+func ConsumeMessage() {
+	config := sarama.NewConfig()
+	config.Producer.Partitioner = sarama.NewManualPartitioner
+	config.Consumer.Return.Errors = true
+	servers := []string{os.Getenv("KAFKA_URL")}
+
+	consumer, err := sarama.NewConsumer(servers, nil)
+	if err != nil {
+	}
+
+	defer consumer.Close()
+
+	partitionConsumer, err := consumer.ConsumePartition(os.Getenv("KAFKA_TOPIC"), int32(0), sarama.OffsetNewest)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer partitionConsumer.Close()
+
+	var harga = models.Transaction{}
+	for {
+		select {
+
+		case err := <-partitionConsumer.Errors():
+			log.Fatal(err)
+			break
+
+		case msg := <-partitionConsumer.Messages():
+
+			err := json.Unmarshal(msg.Value, &harga)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			var buybackParams models.TopupParams
+			json.Unmarshal(msg.Value, &buybackParams)
+
+			goldBalance := buybackParams.CurrentGoldBalance + buybackParams.GoldWeight
+
+			transaction := models.Transaction{
+				ReffID:       buybackParams.ReffID,
+				Norek:        buybackParams.Norek,
+				Type:         "topup",
+				GoldWeight:   buybackParams.GoldWeight,
+				GoldBalance:  goldBalance,
+				HargaTopup:   buybackParams.HargaTopup,
+				HargaBuyback: buybackParams.HargaBuyback,
+				CreatedAt:    int(time.Now().Unix()),
+			}
+
+			err = db.Create(&transaction).Error
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			err = db.Model(models.Rekening{}).Where("norek = ?", transaction.Norek).Update("gold_balance", transaction.GoldBalance).Error
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			log.Printf("success save data : %s", string(msg.Value))
 			continue
 		}
-
-		if err := reader.CommitMessages(ctx, mssg); err != nil {
-			log.Fatal("commit messages fail:", err)
-		}
 	}
-}
-
-func SaveBuyback(db *gorm.DB, data []byte) error {
-	var buybackParams models.TopupParams
-	if err := json.Unmarshal(data, &buybackParams); err != nil {
-		return fmt.Errorf("unmarshall data error : %s", err.Error())
-	}
-
-	conn := db.Begin()
-
-	goldBalance := buybackParams.CurrentGoldBalance + buybackParams.GoldWeight
-	transaction := models.Transaction{
-		ReffID:       buybackParams.ReffID,
-		Norek:        buybackParams.Norek,
-		Type:         "topup",
-		GoldWeight:   buybackParams.GoldWeight,
-		GoldBalance:  goldBalance,
-		HargaTopup:   buybackParams.HargaTopup,
-		HargaBuyback: buybackParams.HargaBuyback,
-		CreatedAt:    int(time.Now().Unix()),
-	}
-
-	if err := conn.Create(&transaction).Error; err != nil {
-		conn.Rollback()
-		return err
-	}
-
-	if err := conn.Model(models.Rekening{}).Where("norek = ?", buybackParams.Norek).Update("gold_balance", goldBalance).Error; err != nil {
-		conn.Rollback()
-		return err
-	}
-
-	return conn.Commit().Error
-}
-
-func getKafkaReader(kafkaURL, topic, groupID string) *kafka.Reader {
-	brokers := strings.Split(kafkaURL, ",")
-	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  brokers,
-		GroupID:  groupID,
-		Topic:    topic,
-		MinBytes: 1e3,  // 1KB
-		MaxBytes: 10e6, // 10MB
-	})
 }

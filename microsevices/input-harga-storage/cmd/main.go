@@ -1,19 +1,19 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"test_jajanomic/microservices/input-harga-storage/models"
 
+	"github.com/Shopify/sarama"
 	"github.com/joho/godotenv"
-	"github.com/segmentio/kafka-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+var db *gorm.DB
 
 func main() {
 
@@ -27,56 +27,61 @@ func main() {
 		os.Getenv("DB_HOST"), os.Getenv("DB_USER"), os.Getenv("DB_PASS"), os.Getenv("DB_NAME"), os.Getenv("DB_PORT"),
 	)
 	log.Println("connecting to db at ", dsn)
-	fmt.Println(dsn, "ini dsn")
-	db, err := gorm.Open(postgres.Open(dsn), nil)
+
+	conn, err := gorm.Open(postgres.Open(dsn), nil)
 	if err != nil {
 		log.Fatal("Error connect to db")
 	}
 	log.Println("connected to db at ", dsn)
 
-	r := getKafkaReader(os.Getenv("KAFKA_URL"), os.Getenv("KAFKA_TOPIC"), os.Getenv("KAFKA_GROUP_ID"))
-	ctx := context.Background()
+	db = conn
+
+	ConsumeMessage()
+
+}
+
+func ConsumeMessage() {
+	config := sarama.NewConfig()
+	config.Producer.Partitioner = sarama.NewManualPartitioner
+	config.Consumer.Return.Errors = true
+	servers := []string{os.Getenv("KAFKA_URL")}
+
+	consumer, err := sarama.NewConsumer(servers, nil)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer consumer.Close()
+
+	partitionConsumer, err := consumer.ConsumePartition(os.Getenv("KAFKA_TOPIC"), int32(0), sarama.OffsetNewest)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer partitionConsumer.Close()
+
+	var harga = models.Harga{}
 	for {
-		m, err := r.FetchMessage(ctx)
-		if err != nil {
-			log.Println("fetch message error :", err)
+		select {
+
+		case err := <-partitionConsumer.Errors():
+			log.Fatal(err)
 			break
-		}
-		log.Printf("message at topic/partition/offset %v/%v/%v: %s\n", m.Topic, m.Partition, m.Offset, string(m.Key))
-		if err := saveHarga(db, m.Value); err != nil {
-			log.Println(err.Error())
+
+		case msg := <-partitionConsumer.Messages():
+
+			err := json.Unmarshal(msg.Value, &harga)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			err = db.Create(&harga).Error
+			if err != nil {
+				log.Println(err)
+			}
+
+			log.Printf("success save data : %s", string(msg.Value))
 			continue
 		}
-
-		if err := r.CommitMessages(ctx, m); err != nil {
-			log.Fatal("failed to commit messages:", err)
-		}
 	}
-}
-
-func getKafkaReader(kafkaURL, topic, groupID string) *kafka.Reader {
-	brokers := strings.Split(kafkaURL, ",")
-	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  brokers,
-		GroupID:  groupID,
-		Topic:    topic,
-		MinBytes: 1e3,  // 1KB
-		MaxBytes: 10e6, // 10MB
-	})
-}
-
-func saveHarga(db *gorm.DB, data []byte) error {
-	var harga models.Harga
-	if err := json.Unmarshal(data, &harga); err != nil {
-		return fmt.Errorf("unmarshall data error : %s", err.Error())
-	}
-
-	fmt.Println(harga, "ini harga")
-
-	if err := db.Create(&harga).Error; err != nil {
-		return fmt.Errorf("save data error : %s", err.Error())
-	}
-
-	log.Printf("success save data : %s", string(data))
-	return nil
 }
