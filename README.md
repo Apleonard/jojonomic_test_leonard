@@ -1,24 +1,27 @@
 # jojonomic_test_leonard
 
 ## Requirements
-  - Golang 
+  - GO 1.19
   - Go Module
   - Postgresql Database
+  - kafka sarama (github.com/Shopify/sarama)
 
 ## Installing
   - Install Dependecies
-     ```console in each microservices
+    console in each microservices
+     ```
      $ go mod tidy
      ```
-  - Fill your local .env configuration
+  - Fill your local .env configuration in each microservices
 
 ## Run Program
   - Run Project
-     ```console in each microservices
+    console in each microservices
+     ```
      $ go run cmd/main.go
      ```
   - Run Docker
-       ```console
+     ```
     docker-compose -f ./misc/docker-compose.yaml up -d
      ```
 
