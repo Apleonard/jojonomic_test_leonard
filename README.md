@@ -8,7 +8,7 @@
 
 ## Installing
   - Install Dependecies
-  
+
     console in each microservices
      ```
      $ go mod tidy
@@ -31,3 +31,5 @@
     https://www.getpostman.com/collections/29c97b71c76c0dc58558
 
 
+## Test Run Video
+    https://www.loom.com/share/5a1644a93ec1446aade318a11b2ce173
