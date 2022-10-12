@@ -45,6 +45,26 @@ services:
     networks:
       - default-network
 
+  # kafka-1:
+  #   image: 'ruppdog/kafka-sarama:latest'
+  #   ports:
+  #     - 9093:9093
+  #     - 29092:29092
+  #   environment:
+  #     KAFKA_BROKER_ID: 1
+  #     KAFKA_VERSION: ${KAFKA_VERSION:-3.1.2}
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093
+  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+  #     KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  #     JMX_PORT: 9998
+  #     KAFKA_JMX_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka1 -Dcom.sun.management.jmxremote.rmi.port=9998
+  #   depends_on:
+  #     - zookeeper 
+  #   networks:
+  #     - default-network
+
   kafka-ui:
     image: provectuslabs/kafka-ui
     container_name: kafka-ui
